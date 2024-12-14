@@ -1,30 +1,115 @@
-<!--
-console.error("404，您访问的脚本 "+document.currentScript.src+" 搞丢了！");
-((s)=>{
-	s.src="https://cdn-go.cn/aegis/aegis-sdk/latest/aegis.min.js";
-	s.referrerScript=document.currentScript.src
-	s.onload=()=>{
-		(new Aegis({id:'aorgLlJTLfQVrxAwGe',uin:'',reportApiSpeed: true,reportAssetSpeed: true})).report("网页 "+location.href+" 引用 "+s.referrerScript+" 脚本触发了404")
-	}
-	document.getElementsByTagName("head")[0].appendChild(s)
-})(document.createElement("script"))
-/*-->
-<!DOCTYPE HTML>
-<html>
-<head>
-<meta charset="UTF-8" />
-<meta name="description" content="公益404页面是由腾讯公司员工志愿者自主发起的互联网公益活动。" />
-<link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="32x32" href="./favicon-32x32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="./favicon-16x16.png">
-<link rel="manifest" href="./site.webmanifest">
-<body>
-<script>
-let s = document.createElement("script");
-s.src="./404.js"
-s.crossorigin="anonymous"
-document.getElementsByTagName("head")[0].appendChild(s);
-</script>
-</body>
-</html>
-<!-- */ //-->
+function parseCookies(cookieString) {
+  if (!cookieString) return {};
+  return Object.fromEntries(
+    cookieString.split(/;\s*/)
+      .filter(Boolean)
+      .map(pair => {
+        const [key, ...values] = pair.split('=');
+        return [key, values.join('=')];
+      })
+  );
+}
+
+function getContentType(url) {
+  const extension = url.split('.').pop().toLowerCase();
+  const contentTypes = {
+    'html': 'text/html',
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'json': 'application/json',
+    'css': 'text/css',
+    'js': 'application/javascript'
+  };
+  return contentTypes[extension] || 'text/html';
+}
+
+export default {
+  async fetch(request, env, ctx) {
+    try {
+      const timestamp = Date.now();
+      const cookies = parseCookies(request.headers.get('Cookie'));
+      const hasVisited = cookies.hasVisited === 'true';
+      const url = new URL(request.url);
+      const pathname = url.pathname;
+
+      // 缓存配置
+      const cacheConfig = {
+        cf: {
+          cacheTtl: 3600,
+          cacheEverything: true
+        }
+      };
+
+      // 已访问用户直接跳转
+      if (hasVisited) {
+        // 保持原始路径，只改变域名
+        const navResponse = await fetch(`https://nci6tjq7.github.io/navi${pathname}`, cacheConfig);
+        if (!navResponse.ok) throw new Error('Navigation page fetch failed');
+        
+        // 从响应中获取内容类型，如果没有则根据文件扩展名判断
+        const contentType = navResponse.headers.get('Content-Type') || getContentType(pathname);
+        
+        const headers = new Headers(navResponse.headers); // 保留原始响应头
+        headers.set('Content-Type', contentType);
+        headers.set('Cache-Control', 'public, max-age=3600');
+
+        // 根据内容类型决定如何处理响应体
+        const isText = contentType.includes('text') || contentType.includes('json');
+        const body = isText ? await navResponse.text() : await navResponse.arrayBuffer();
+        
+        return new Response(body, { headers });
+      }
+
+      const startTime = parseInt(cookies.startTime) || timestamp;
+      
+      // 3秒后跳转逻辑
+      if (timestamp - startTime >= 3000) {
+        const navResponse = await fetch(`https://nci6tjq7.github.io/navi${pathname}`, cacheConfig);
+        if (!navResponse.ok) throw new Error('Navigation page fetch failed');
+        
+        const contentType = navResponse.headers.get('Content-Type') || getContentType(pathname);
+        
+        const headers = new Headers(navResponse.headers);
+        headers.set('Content-Type', contentType);
+        headers.set('Cache-Control', 'public, max-age=3600');
+        headers.append('Set-Cookie', `startTime=0; Path=/; Max-Age=0`);
+        headers.append('Set-Cookie', `hasVisited=true; Path=/; Max-Age=2592000`);
+
+        const isText = contentType.includes('text') || contentType.includes('json');
+        const body = isText ? await navResponse.text() : await navResponse.arrayBuffer();
+        
+        return new Response(body, { headers });
+      }
+      
+      // 404页面显示
+      const notFoundResponse = await fetch(`https://404html-90m.pages.dev/404${pathname}`);
+      if (!notFoundResponse.ok) throw new Error('404 page fetch failed');
+      
+      const contentType = notFoundResponse.headers.get('Content-Type') || getContentType(pathname);
+      
+      const headers = new Headers(notFoundResponse.headers);
+      headers.set('Content-Type', contentType);
+      headers.set('Cache-Control', 'no-store');
+      headers.set('Refresh', '3');
+      headers.append('Set-Cookie', `startTime=${timestamp}; Path=/`);
+      
+      const isText = contentType.includes('text') || contentType.includes('json');
+      const body = isText ? await notFoundResponse.text() : await notFoundResponse.arrayBuffer();
+      
+      return new Response(body, { headers });
+      
+    } catch (error) {
+      console.error('Error:', error.message);
+      
+      return new Response('Service temporarily unavailable', {
+        status: 503,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Retry-After': '30'
+        }
+      });
+    }
+  }
+};
